@@ -9,7 +9,6 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
-  <!-- أضف CSS هنا -->
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -135,13 +134,11 @@
 </head>
 <body>
 
-  <!-- Header -->
   <div class="header">
     <span class="sidebar-toggle" onclick="toggleSidebar()">☰</span>
     <span class="company-name">إدارة شركة شغلني</span>
   </div>
 
-  <!-- Sidebar -->
   <div class="sidebar" id="sidebar">
     <h3>إدارة الموظفين</h3>
     <ul>
@@ -155,11 +152,9 @@
     </ul>
   </div>
 
-  <!-- Main Container -->
   <div class="container">
     <h2>إدارة الشركة</h2>
 
-    <!-- Add Employee -->
     <div id="addEmployeeSection" class="hidden">
       <h3>إضافة موظف</h3>
       <input type="text" id="employeeName" placeholder="اسم الموظف" />
@@ -168,13 +163,11 @@
       <button onclick="addEmployee()">إضافة موظف</button>
     </div>
 
-    <!-- Search Employee -->
     <div id="searchEmployeeSection" class="hidden">
       <h3>بحث بالاسم أو رقم الهاتف</h3>
       <input type="text" id="searchName" placeholder="بحث عن الموظف" oninput="searchEmployee()" />
     </div>
 
-    <!-- Employee Table -->
     <table id="employeeTable" class="hidden">
       <thead>
         <tr>
@@ -189,7 +182,6 @@
       <tbody id="employeeTableBody"></tbody>
     </table>
 
-    <!-- Balance Management -->
     <div id="balanceManagementSection" class="hidden">
       <h3>إدارة الرصيد</h3>
       <div id="selectedEmployeeInfo" class="hidden">
@@ -201,21 +193,18 @@
       </div>
     </div>
 
-    <!-- Bulk Balance Management -->
     <div id="bulkBalanceSection" class="hidden">
       <h3>إضافة رصيد لجميع الموظفين</h3>
       <input type="number" id="bulkAmount" placeholder="المبلغ المضاف لكل موظف" />
       <button onclick="addBulkBalance()">تأكيد الإضافة</button>
     </div>
 
-    <!-- Send Salaries -->
     <div id="sendSalariesSection" class="hidden">
       <h3>إرسال رواتب الموظفين</h3>
       <p>سيتم إضافة المبلغ اليومي لكل موظف إلى رصيده</p>
-      <button onclick="sendSalaries()">إرسال الرواتب</button>
+      <button onclick="calculateSalaries()">تحديث الرواتب حسب المدة</button>
     </div>
 
-    <!-- Activity Log -->
     <div id="activityLogSection" class="hidden activity-log">
       <h3>سجل النشاطات</h3>
       <table id="activityLogList">
@@ -229,7 +218,6 @@
       </table>
     </div>
 
-    <!-- Company Revenues -->
     <div id="companyRevenuesSection" class="hidden">
       <h3>إيرادات الشركة</h3>
       <p id="companyRevenueDisplay">الرصيد الحالي: 0</p>
@@ -292,14 +280,10 @@
     }
 
     function showSection(sectionId) {
-      // إغلاق الشريط الجانبي أولاً
       document.getElementById("sidebar").classList.remove("open");
-      
-      // إخفاء جميع الأقسام ثم إظهار القسم المطلوب
       hideAllSections();
       document.getElementById(sectionId).classList.remove("hidden");
       
-      // بعض الأقسام تحتاج إلى تحميل بيانات إضافية
       switch(sectionId) {
         case 'searchEmployeeSection':
           employeeTable.classList.remove("hidden");
@@ -322,6 +306,7 @@
       if (name && phone && !isNaN(dailyAmount)) {
         const newEmployeeRef = db.ref("employees").push();
         const id = newEmployeeRef.key;
+        const now = new Date().toISOString();
 
         newEmployeeRef.set({
           id: id,
@@ -329,7 +314,9 @@
           phone: phone,
           type: "عادي",
           balance: 0,
-          dailyAmount: dailyAmount
+          dailyAmount: dailyAmount,
+          lastUpdateTimestamp: now,
+          totalMinutesWorked: 0
         }).then(() => {
           alert("تمت الإضافة!");
           employeeNameInput.value = "";
@@ -340,6 +327,47 @@
       } else {
         alert("يرجى إدخال الاسم ورقم الهاتف والمبلغ اليومي.");
       }
+    }
+
+    function calculateSalaries() {
+      const now = new Date();
+      db.ref("employees").once("value", snapshot => {
+          const updates = {};
+          let totalAdded = 0;
+          let employeesCount = 0;
+          
+          snapshot.forEach(child => {
+              const emp = child.val();
+              const dailyAmount = emp.dailyAmount || 0;
+              
+              if (dailyAmount > 0) {
+                  const lastUpdate = emp.lastUpdateTimestamp ? new Date(emp.lastUpdateTimestamp) : new Date();
+                  const diffMinutes = Math.floor((now - lastUpdate) / (1000 * 60));
+                  
+                  if (diffMinutes > 0) {
+                      const salaryPerMinute = dailyAmount / (8 * 60); // 8 ساعات عمل يومياً
+                      const earnedAmount = salaryPerMinute * diffMinutes;
+                      
+                      updates[`employees/${child.key}/balance`] = (emp.balance || 0) + earnedAmount;
+                      updates[`employees/${child.key}/lastUpdateTimestamp`] = now.toISOString();
+                      updates[`employees/${child.key}/totalMinutesWorked`] = (emp.totalMinutesWorked || 0) + diffMinutes;
+                      
+                      totalAdded += earnedAmount;
+                      employeesCount++;
+                      logActivity(`تم إضافة ${earnedAmount.toFixed(2)} للموظف ${emp.name} عن ${diffMinutes} دقيقة`);
+                  }
+              }
+          });
+          
+          if (Object.keys(updates).length > 0) {
+              db.ref().update(updates).then(() => {
+                  alert(`تم تحديث رواتب ${employeesCount} موظفين! المجموع المضاف: ${totalAdded.toFixed(2)}`);
+                  displayEmployeeList();
+              });
+          } else {
+              alert("لا يوجد تحديثات لتنفيذها");
+          }
+      });
     }
 
     function displayEmployeeList() {
@@ -367,7 +395,7 @@
 
           row.innerHTML = `
             <td>${emp.name}</td>
-            <td>${emp.balance}</td>
+            <td>${emp.balance.toFixed(2)}</td>
             <td>${emp.id}</td>
             <td>${emp.phone}</td>
             <td></td>
@@ -387,7 +415,7 @@
       db.ref("employees/" + selectedEmployeeId).once("value", snapshot => {
         const emp = snapshot.val();
         selectedEmployeeName.textContent = `اسم الموظف: ${emp.name}`;
-        selectedEmployeeBalance.textContent = `الرصيد الحالي: ${emp.balance}`;
+        selectedEmployeeBalance.textContent = `الرصيد الحالي: ${emp.balance.toFixed(2)}`;
         selectedEmployeeInfo.classList.remove("hidden");
       });
     }
@@ -408,10 +436,9 @@
 
         if (action === "increase") {
           newBalance += amount;
-          const currentTimestamp = new Date().toISOString();
           employeeRef.update({
             balance: newBalance,
-            lastBalanceUpdate: currentTimestamp
+            lastUpdateTimestamp: new Date().toISOString()
           }).then(() => {
             logActivity(`تمت زيادة الرصيد للموظف ${emp.name} بمقدار ${amount}`);
           });
@@ -422,15 +449,10 @@
 
             companyRevenueRef.once("value", snapshot => {
               const currentRevenue = snapshot.val() || 0;
-              const newRevenue = currentRevenue - amount;
-
-              if (newRevenue < 0) {
-                alert("إيرادات الشركة غير كافية.");
-                return;
-              }
+              const newRevenue = currentRevenue + amount; // زيادة إيرادات الشركة عند الخصم من الموظف
 
               companyRevenueRef.set(newRevenue).then(() => {
-                logActivity(`تم خصم مبلغ ${amount} م إيرادات الشركة`);
+                logActivity(`تم إضافة مبلغ ${amount} لإيرادات الشركة`);
               });
             });
           } else {
@@ -440,7 +462,7 @@
         }
 
         employeeRef.update({ balance: newBalance }).then(() => {
-          selectedEmployeeBalance.textContent = `الرصيد الحالي: ${newBalance}`;
+          selectedEmployeeBalance.textContent = `الرصيد الحالي: ${newBalance.toFixed(2)}`;
           balanceChangeInput.value = "";
         });
       });
@@ -466,7 +488,7 @@
           const emp = child.val();
           const newBalance = (emp.balance || 0) + amount;
           updates[`employees/${child.key}/balance`] = newBalance;
-          updates[`employees/${child.key}/lastBalanceUpdate`] = timestamp;
+          updates[`employees/${child.key}/lastUpdateTimestamp`] = timestamp;
         });
 
         db.ref().update(updates).then(() => {
@@ -480,75 +502,6 @@
         });
       });
     }
-
-    function sendSalaries() {
-      if (!confirm("هل أنت متأكد من رغبتك في إرسال رواتب جميع الموظفين حسب المبلغ اليومي لكل موظف؟")) {
-        return;
-      }
-
-      db.ref("employees").once("value", snapshot => {
-        const updates = {};
-        const timestamp = new Date().toISOString();
-        let totalSalaries = 0;
-        let employeesCount = 0;
-        
-        snapshot.forEach(child => {
-          const emp = child.val();
-          const dailyAmount = emp.dailyAmount || 0;
-          
-          if (dailyAmount > 0) {
-            const newBalance = (emp.balance || 0) + dailyAmount;
-            updates[`employees/${child.key}/balance`] = newBalance;
-            updates[`employees/${child.key}/lastBalanceUpdate`] = timestamp;
-            totalSalaries += dailyAmount;
-            employeesCount++;
-          }
-        });
-
-        if (employeesCount === 0) {
-          alert("لا يوجد موظفين لديهم مبلغ يومي محدد");
-          return;
-        }
-
-        db.ref().update(updates).then(() => {
-          alert(`تم إرسال الرواتب لـ ${employeesCount} موظفين بنجاح! المجموع الكلي: ${totalSalaries}`);
-          logActivity(`تم إرسال الرواتب لـ ${employeesCount} موظفين - المجموع الكلي: ${totalSalaries}`);
-          displayEmployeeList();
-        }).catch(error => {
-          console.error("Error sending salaries:", error);
-          alert("حدث خطأ أثناء إرسال الرواتب");
-        });
-      });
-    }
-
-    function autoAddBalance() {
-      db.ref("employees").once("value", snapshot => {
-        snapshot.forEach(child => {
-          const emp = child.val();
-          const dailyAmount = emp.dailyAmount || 0;
-          const employeeRef = db.ref("employees/" + child.key);
-
-          if (dailyAmount > 0) {
-            const lastUpdateTimestamp = emp.lastBalanceUpdate || new Date().toISOString();
-            const currentDate = new Date().toISOString().split('T')[0];
-            const lastUpdateDate = new Date(lastUpdateTimestamp).toISOString().split('T')[0];
-
-            if (currentDate !== lastUpdateDate) {
-              let newBalance = emp.balance + dailyAmount;
-
-              employeeRef.update({
-                balance: newBalance,
-                lastBalanceUpdate: currentDate
-              }).then(() => {
-                logActivity(`تم إضافة ${dailyAmount} إلى رصيد الموظف ${emp.name} بناءً على مرور يوم كامل`);
-              });
-            }
-          }
-        });
-      });
-    }
-
-    setInterval(autoAddBalance, 24 * 60 * 60 * 1000);
 
     function displayActivityLog() {
       activityLogTableBody.innerHTML = "";
@@ -596,7 +549,7 @@
         } else if (action === "decrease") {
           if (newRevenue >= amount) {
             newRevenue -= amount;
-            logActivity(`تم خصم مبلغ ${amount} م إيرادات الشركة`);
+            logActivity(`تم خصم مبلغ ${amount} من إيرادات الشركة`);
           } else {
             alert("إيرادات الشركة غير كافية.");
             return;
@@ -616,7 +569,6 @@
 
       for (let row of rows) {
         const nameCell = row.cells[0];
-        const balanceCell = row.cells[1];
         const idCell = row.cells[2];
         const phoneCell = row.cells[3];
 
@@ -631,11 +583,11 @@
         }
       }
     }
-	
 
     window.onload = function () {
       hideAllSections();
       displayEmployeeList();
+      calculateSalaries(); // حساب الرواتب تلقائياً عند فتح الموقع
     };
   </script>
 </body>
